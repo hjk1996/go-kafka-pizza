@@ -16,11 +16,16 @@ var prod *kafka.Producer
 var kafkaServer string
 var kafkaTopic string
 
+type PizzaMenu struct {
+	Name     string `json:"name"`
+	Price    int    `json:"price"`
+	Quantity int    `json:"Quantity"`
+}
+
 type Order struct {
 	Id          string    `json:"id"`
-	ProductName string    `json:"productName"`
-	Quantity    int       `json:"quantity"`
-	Price       int       `json:"price"`
+    Orderer string `json:"orderer"`
+    Menus []PizzaMenu `json:"menus"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
