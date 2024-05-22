@@ -1,0 +1,15 @@
+POST localhost:9092/order HTTP/1.1
+Content-Type: application/json
+
+{
+ "id": "sdf8sdf8sdf8",
+ "orderer": "sf8sdf8sd8",
+ "menus": [
+    {
+        "name": "hawai",
+        "price": 123000,
+        "quantity": 3
+    }
+ ],
+ "createdAt": {{$timestamp}}   
+}

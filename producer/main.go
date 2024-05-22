@@ -76,6 +76,7 @@ func orderHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	order.CreatedAt = time.Now()
 
 	msg, err := json.Marshal(order)
 	if err != nil {

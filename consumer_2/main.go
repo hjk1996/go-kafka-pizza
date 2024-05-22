@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,30 +9,26 @@ import (
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 const MIN_MESSAGE_COUNT = 100
 
 var kafkaServer string
 var kafkaConsumerTopic string
-var kafkaProducerTopic string
 var groupId string
 var consumer *kafka.Consumer
-var producer *kafka.Producer
+var dynamoClient *dynamodb.Client
 
 type PizzaMenu struct {
 	Name     string `json:"name"`
 	Price    int    `json:"price"`
 	Quantity int    `json:"Quantity"`
-}
-
-type Order struct {
-	Id        string      `json:"id"`
-	Orderer   string      `json:"orderer"`
-	Menus     []PizzaMenu `json:"menus"`
-	CreatedAt time.Time   `json:"createdAt"`
 }
 
 type PizzaUncooked struct {
@@ -42,50 +39,32 @@ type PizzaUncooked struct {
 }
 
 func processMessage(msg *kafka.Message) {
-	var order Order
+	var pizza PizzaUncooked
 	fmt.Printf("received message: %s\n", string(msg.Value))
 
-	err := json.Unmarshal(msg.Value, &order)
+	err := json.Unmarshal(msg.Value, &pizza)
 
 	if err != nil {
-		fmt.Println("failed to process the order: %s", order)
+		fmt.Printf("failed to cook the pizze: %s", err)
 		return
 	}
 
-	for _, menu := range order.Menus {
-		for i := 0; i < menu.Quantity; i++ {
-			go func() {
-				newUUID := uuid.New().String()
-				pizza := PizzaUncooked{
-					Id:        newUUID,
-					Orderer:   order.Orderer,
-					MenuName:  menu.Name,
-					CreatedAt: time.Now(),
-				}
+	item := map[string]types.AttributeValue{
+		"id":        &types.AttributeValueMemberS{Value: pizza.Id},
+		"orderer":   &types.AttributeValueMemberS{Value: pizza.Orderer},
+		"menuName":  &types.AttributeValueMemberS{Value: pizza.MenuName},
+		"createdAt": &types.AttributeValueMemberS{Value: pizza.CreatedAt.String()},
+	}
 
-				msg, err := json.Marshal(pizza)
+	input := &dynamodb.PutItemInput{
+		TableName: aws.String("pizza"),
+		Item:      item,
+	}
 
-				if err != nil {
-					fmt.Println("failed to process the menu")
-				}
+	_, err = dynamoClient.PutItem(context.TODO(), input)
 
-				err = producer.Produce(&kafka.Message{
-					TopicPartition: kafka.TopicPartition{
-						Topic:     &kafkaProducerTopic,
-						Partition: kafka.PartitionAny,
-					},
-					Value: msg,
-				}, nil,
-				)
-
-				if err != nil {
-					fmt.Println("failed to place the menu to the kitchen")
-				}
-
-			}()
-
-		}
-
+	if err != nil {
+		fmt.Printf("failed to put item. %s", err)
 	}
 
 }
@@ -99,9 +78,16 @@ func main() {
 
 	}
 
+	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion("ap-northeast-2"))
+
+	if err != nil {
+		panic(err)
+	}
+
+	dynamoClient = dynamodb.NewFromConfig(cfg)
+
 	kafkaServer = os.Getenv("KAFKA_SERVER")
 	kafkaConsumerTopic = os.Getenv("KAFKA_CONSUMER_TOPIC")
-	kafkaProducerTopic = os.Getenv("KAFKA_PRODUCER_TOPIC")
 	groupId = os.Getenv("GROUP_ID")
 
 	fmt.Println("Creating a consumer...")
@@ -117,18 +103,6 @@ func main() {
 
 	}
 	defer consumer.Close()
-
-	fmt.Println("Creating a producer")
-	producer, err = kafka.NewProducer(
-		&kafka.ConfigMap{
-			"bootstrap.servers": kafkaServer,
-		},
-	)
-
-	if err != nil {
-		log.Fatalf("failed to create a producer. %s", err)
-	}
-	defer producer.Close()
 
 	topics := []string{kafkaConsumerTopic}
 
@@ -146,7 +120,7 @@ func main() {
 		switch et := ev.(type) {
 		case *kafka.Message:
 			msgCount += 1
-			processMessage(et)
+			go processMessage(et)
 			if msgCount&MIN_MESSAGE_COUNT == 0 {
 				_, err := consumer.Commit()
 				if err != nil {
